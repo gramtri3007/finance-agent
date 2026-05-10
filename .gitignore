@@ -6,3 +6,6 @@ expenses.json
 *.pdf
 *.csv
 statement.*
+*.pdf
+*.csv
+statement.*
