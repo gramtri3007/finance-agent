@@ -46,69 +46,71 @@ def run_tool(tool_name, arguments):
         return save_expense(**arguments)
     elif tool_name == "get_summary":
         return get_summary()
-print("💰 Finance Agent ready! Type 'quit' to exit.\n")
 
-messages = [
-    {
-        "role": "system",
-        "content": """You are a personal finance assistant with two tools:
-        - save_expense: call this when user mentions spending money
-        - get_summary: call this when user asks about their spending
-        Always call a tool when relevant. After the tool runs, give a friendly response."""
-    }
-]
+if __name__ == "__main__":
+    print("💰 Finance Agent ready! Type 'quit' to exit.\n")
 
-while True:
-    user_input = input("You: ")
-    if user_input.lower() == "quit":
-        break
+    messages = [
+        {
+            "role": "system",
+            "content": """You are a personal finance assistant with two tools:
+            - save_expense: call this when user mentions spending money
+            - get_summary: call this when user asks about their spending
+            Always call a tool when relevant. After the tool runs, give a friendly response."""
+        }
+    ]
 
-    messages.append({"role": "user", "content": user_input})
+    while True:
+        user_input = input("You: ")
+        if user_input.lower() == "quit":
+            break
 
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=messages,
-        tools=tools,
-        tool_choice="auto"
-    )
+        messages.append({"role": "user", "content": user_input})
 
-    message = response.choices[0].message
-
-    if message.tool_calls:
-        tool_call = message.tool_calls[0]
-        tool_name = tool_call.function.name
-        arguments = json.loads(tool_call.function.arguments)
-
-        print(f"  → Calling {tool_name}...")
-        result = run_tool(tool_name, arguments)
-
-        messages.append({
-            "role": "assistant",
-            "tool_calls": [
-                {
-                    "id": tool_call.id,
-                    "type": "function",
-                    "function": {
-                        "name": tool_name,
-                        "arguments": tool_call.function.arguments
-                    }
-                }
-            ]
-        })
-        messages.append({
-            "role": "tool",
-            "tool_call_id": tool_call.id,
-            "content": result
-        })
-
-        final = client.chat.completions.create(
+        response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=messages,
-            tools=tools
+            tools=tools,
+            tool_choice="auto"
         )
-        reply = final.choices[0].message.content
-    else:
-        reply = message.content
 
-    print(f"Agent: {reply}\n")
-    messages.append({"role": "assistant", "content": reply})
+        message = response.choices[0].message
+
+        if message.tool_calls:
+            tool_call = message.tool_calls[0]
+            tool_name = tool_call.function.name
+            arguments = json.loads(tool_call.function.arguments)
+
+            print(f"  → Calling {tool_name}...")
+            result = run_tool(tool_name, arguments)
+
+            messages.append({
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": tool_call.id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": tool_call.function.arguments
+                        }
+                    }
+                ]
+            })
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": result
+            })
+
+            final = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=messages,
+                tools=tools
+            )
+            reply = final.choices[0].message.content
+        else:
+            reply = message.content
+
+        print(f"Agent: {reply}\n")
+        messages.append({"role": "assistant", "content": reply})
