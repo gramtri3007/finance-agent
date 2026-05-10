@@ -2,8 +2,7 @@ from groq import Groq
 from dotenv import load_dotenv
 import os
 import json
-from storage import save_expense
-from summary import get_summary
+from database import save_expense_db, get_summary_db
 
 load_dotenv()
 
@@ -43,9 +42,9 @@ tools = [
 def run_tool(tool_name, arguments):
     if tool_name == "save_expense":
         arguments["amount"] = float(arguments["amount"])
-        return save_expense(**arguments)
+        return save_expense_db(None, arguments["amount"], arguments["category"], arguments["description"])
     elif tool_name == "get_summary":
-        return get_summary()
+        return get_summary_db(None)
 
 if __name__ == "__main__":
     print("💰 Finance Agent ready! Type 'quit' to exit.\n")
