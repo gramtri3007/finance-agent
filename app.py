@@ -134,82 +134,174 @@ else:
     # ── Main area ─────────────────────────────────────────
     st.title("💰 Personal Finance Agent")
 
-    # ── PDF Upload ────────────────────────────────────────
-    st.subheader("📄 Upload Bank Statement")
-    st.info("""
-    🔒 **Privacy notice:** Your PDF is never saved to our servers.
-    We extract text from it in memory, send only the transaction
-    details to our AI parser, and store only: amount, category,
-    and description. Your IBAN, account number, balance, and
-    personal details are never stored.
-    """)
+    # ── Upload tabs ───────────────────────────────────────
+    tab_pdf, tab_receipt = st.tabs(["📄 Upload Bank Statement", "🧾 Scan Receipt"])
 
-    uploaded_file = st.file_uploader(
-        "Upload your PDF bank statement",
-        type="pdf",
-        help="Supports Revolut, AIB, Bank of Ireland and most Irish banks"
-    )
+    with tab_pdf:
+        st.info("""
+        🔒 **Privacy notice:** Your PDF is never saved to our servers.
+        We extract text from it in memory, send only the transaction
+        details to our AI parser, and store only: amount, category,
+        and description. Your IBAN, account number, balance, and
+        personal details are never stored.
+        """)
 
-    if uploaded_file:
-        if st.button("Parse & Import Transactions", type="primary"):
-            with st.spinner("Reading your statement..."):
-                import fitz
-                import tempfile
+        uploaded_file = st.file_uploader(
+            "Upload your PDF bank statement",
+            type="pdf",
+            help="Supports Revolut, AIB, Bank of Ireland and most Irish banks"
+        )
 
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                    tmp.write(uploaded_file.read())
-                    tmp_path = tmp.name
+        if uploaded_file:
+            if st.button("Parse & Import Transactions", type="primary"):
+                with st.spinner("Reading your statement..."):
+                    import fitz
+                    import tempfile
 
-                doc = fitz.open(tmp_path)
-                full_text = ""
-                for page in doc:
-                    full_text += page.get_text()
-                os.unlink(tmp_path)
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                        tmp.write(uploaded_file.read())
+                        tmp_path = tmp.name
 
-            with st.spinner("AI is parsing transactions..."):
-                try:
-                    parse_response = client.chat.completions.create(
-                        model="llama-3.3-70b-versatile",
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": """You are a bank statement parser.
-                                Extract all expense transactions and return ONLY a JSON array like this:
-                                [{"amount": 45.00, "category": "food", "description": "Tesco"}, ...]
-                                Categories must be one of: food, transport, rent, entertainment, health, shopping, utilities, other.
-                                Only include money going OUT (expenses). Ignore income and transfers in.
-                                Return ONLY the JSON array, nothing else, no markdown, no backticks."""
-                            },
-                            {
-                                "role": "user",
-                                "content": full_text
-                            }
-                        ]
-                    )
+                    doc = fitz.open(tmp_path)
+                    full_text = ""
+                    for page in doc:
+                        full_text += page.get_text()
+                    os.unlink(tmp_path)
 
-                    raw = parse_response.choices[0].message.content.strip()
-                    if raw.startswith("```"):
-                        raw = raw.split("```")[1]
-                        if raw.startswith("json"):
-                            raw = raw[4:]
-                    raw = raw.strip()
-                    transactions = json.loads(raw)
+                with st.spinner("AI is parsing transactions..."):
+                    try:
+                        parse_response = client.chat.completions.create(
+                            model="llama-3.3-70b-versatile",
+                            messages=[
+                                {
+                                    "role": "system",
+                                    "content": """You are a bank statement parser.
+                                    Extract all expense transactions and return ONLY a JSON array like this:
+                                    [{"amount": 45.00, "category": "food", "description": "Tesco"}, ...]
+                                    Categories must be one of: food, transport, rent, entertainment, health, shopping, utilities, other.
+                                    Only include money going OUT (expenses). Ignore income and transfers in.
+                                    Return ONLY the JSON array, nothing else, no markdown, no backticks."""
+                                },
+                                {
+                                    "role": "user",
+                                    "content": full_text
+                                }
+                            ]
+                        )
 
-                    with st.spinner(f"Saving {len(transactions)} transactions..."):
-                        for t in transactions:
-                            save_expense_db(
-                                user_id,
-                                float(t["amount"]),
-                                t["category"],
-                                t["description"],
-                                access_token
-                            )
+                        raw = parse_response.choices[0].message.content.strip()
+                        if raw.startswith("```"):
+                            raw = raw.split("```")[1]
+                            if raw.startswith("json"):
+                                raw = raw[4:]
+                        raw = raw.strip()
+                        transactions = json.loads(raw)
 
-                    st.success(f"✅ Imported {len(transactions)} transactions successfully!")
-                    st.rerun()
+                        with st.spinner(f"Saving {len(transactions)} transactions..."):
+                            for t in transactions:
+                                save_expense_db(
+                                    user_id,
+                                    float(t["amount"]),
+                                    t["category"],
+                                    t["description"],
+                                    access_token
+                                )
 
-                except Exception as e:
-                    st.error(f"Error parsing statement: {str(e)}")
+                        st.success(f"✅ Imported {len(transactions)} transactions successfully!")
+                        st.rerun()
+
+                    except Exception as e:
+                        st.error(f"Error parsing statement: {str(e)}")
+
+    with tab_receipt:
+        st.info("""
+        🔒 **Privacy notice:** Your receipt photo is never saved.
+        It is read in memory, sent to AI to extract the amount and
+        merchant only, then immediately discarded.
+        """)
+
+        receipt_file = st.file_uploader(
+            "Upload a receipt photo",
+            type=["jpg", "jpeg", "png", "webp"],
+            help="Take a clear photo of your receipt in good lighting"
+        )
+
+        if "scanned_expense" not in st.session_state:
+            st.session_state.scanned_expense = None
+
+        if receipt_file:
+            st.image(receipt_file, caption="Your receipt", width=300)
+
+            if st.button("Scan & Save Expense", type="primary"):
+                with st.spinner("AI is reading your receipt..."):
+                    try:
+                        import base64
+
+                        image_bytes = receipt_file.getvalue()
+                        base64_image = base64.b64encode(image_bytes).decode("utf-8")
+                        media_type = receipt_file.type
+
+                        response = client.chat.completions.create(
+                            model="meta-llama/llama-4-scout-17b-16e-instruct",
+                            messages=[
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": """Look at this receipt and extract the expense details.
+                                            Return ONLY a JSON object like this:
+                                            {"amount": 12.50, "category": "food", "description": "Cafe Nero coffee"}
+                                            Categories must be one of: food, transport, rent, entertainment, health, shopping, utilities, other.
+                                            Use the merchant name and items to determine category.
+                                            Return ONLY the JSON object, no markdown, no backticks."""
+                                        },
+                                        {
+                                            "type": "image_url",
+                                            "image_url": {
+                                                "url": f"data:{media_type};base64,{base64_image}"
+                                            }
+                                        }
+                                    ]
+                                }
+                            ]
+                        )
+
+                        raw = response.choices[0].message.content.strip()
+                        if raw.startswith("```"):
+                            raw = raw.split("```")[1]
+                            if raw.startswith("json"):
+                                raw = raw[4:]
+                        raw = raw.strip()
+
+                        st.session_state.scanned_expense = json.loads(raw)
+
+                    except Exception as e:
+                        st.error(f"Error scanning receipt: {str(e)}")
+
+        # Show confirmation outside the button block
+        if st.session_state.scanned_expense:
+            expense = st.session_state.scanned_expense
+            st.success("Receipt scanned successfully!")
+            st.write(f"**Merchant:** {expense['description']}")
+            st.write(f"**Amount:** €{expense['amount']}")
+            st.write(f"**Category:** {expense['category']}")
+
+            if st.button("✅ Confirm & Save", type="primary"):
+                save_expense_db(
+                    user_id,
+                    float(expense["amount"]),
+                    expense["category"],
+                    expense["description"],
+                    access_token
+                )
+                st.session_state.scanned_expense = None
+                st.success("Expense saved!")
+                st.rerun()
+
+            if st.button("❌ Cancel"):
+                st.session_state.scanned_expense = None
+                st.rerun()
 
     st.divider()
 
