@@ -24,7 +24,6 @@ if "session" not in st.session_state:
 if st.session_state.user is None:
     st.title("💰 Personal Finance Agent")
     st.subheader("Your AI-powered finance tracker")
-
     st.info("🔒 Your data is private and secure. Each user only sees their own expenses.")
 
     tab1, tab2 = st.tabs(["Login", "Sign Up"])
@@ -157,63 +156,60 @@ else:
                 import fitz
                 import tempfile
 
-                # Save uploaded file temporarily in memory only
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                     tmp.write(uploaded_file.read())
                     tmp_path = tmp.name
 
-                # Extract text
                 doc = fitz.open(tmp_path)
                 full_text = ""
                 for page in doc:
                     full_text += page.get_text()
-
-                # Delete temp file immediately
                 os.unlink(tmp_path)
 
             with st.spinner("AI is parsing transactions..."):
-                parse_response = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": """You are a bank statement parser.
-                            Extract all expense transactions and return ONLY a JSON array like this:
-                            [{"amount": 45.00, "category": "food", "description": "Tesco"}, ...]
-                            Categories must be one of: food, transport, rent, entertainment, health, shopping, utilities, other.
-                            Only include money going OUT (expenses). Ignore income and transfers in.
-                            Return ONLY the JSON array, nothing else, no markdown, no backticks."""
-                        },
-                        {
-                            "role": "user",
-                            "content": full_text
-                        }
-                    ]
-                )
-
-                raw = parse_response.choices[0].message.content.strip()
-
-                # Clean up in case AI adds backticks
-                if raw.startswith("```"):
-                    raw = raw.split("```")[1]
-                    if raw.startswith("json"):
-                        raw = raw[4:]
-                raw = raw.strip()
-
-                transactions = json.loads(raw)
-
-            with st.spinner(f"Saving {len(transactions)} transactions to your account..."):
-                for t in transactions:
-                    save_expense_db(
-                        user_id,
-                        float(t["amount"]),
-                        t["category"],
-                        t["description"],
-                        access_token
+                try:
+                    parse_response = client.chat.completions.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": """You are a bank statement parser.
+                                Extract all expense transactions and return ONLY a JSON array like this:
+                                [{"amount": 45.00, "category": "food", "description": "Tesco"}, ...]
+                                Categories must be one of: food, transport, rent, entertainment, health, shopping, utilities, other.
+                                Only include money going OUT (expenses). Ignore income and transfers in.
+                                Return ONLY the JSON array, nothing else, no markdown, no backticks."""
+                            },
+                            {
+                                "role": "user",
+                                "content": full_text
+                            }
+                        ]
                     )
 
-            st.success(f"✅ Imported {len(transactions)} transactions successfully!")
-            st.rerun()
+                    raw = parse_response.choices[0].message.content.strip()
+                    if raw.startswith("```"):
+                        raw = raw.split("```")[1]
+                        if raw.startswith("json"):
+                            raw = raw[4:]
+                    raw = raw.strip()
+                    transactions = json.loads(raw)
+
+                    with st.spinner(f"Saving {len(transactions)} transactions..."):
+                        for t in transactions:
+                            save_expense_db(
+                                user_id,
+                                float(t["amount"]),
+                                t["category"],
+                                t["description"],
+                                access_token
+                            )
+
+                    st.success(f"✅ Imported {len(transactions)} transactions successfully!")
+                    st.rerun()
+
+                except Exception as e:
+                    st.error(f"Error parsing statement: {str(e)}")
 
     st.divider()
 
@@ -247,41 +243,46 @@ else:
 
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
-                    response = client.chat.completions.create(
-                        model="llama-3.3-70b-versatile",
-                        messages=st.session_state.messages,
-                        tools=tools,
-                        tool_choice="auto"
-                    )
-                    message = response.choices[0].message
-
-                    if message.tool_calls:
-                        tool_call = message.tool_calls[0]
-                        tool_name = tool_call.function.name
-                        arguments = json.loads(tool_call.function.arguments)
-                        result = run_tool(tool_name, arguments)
-
-                        st.session_state.messages.append({
-                            "role": "assistant",
-                            "tool_calls": [{"id": tool_call.id, "type": "function",
-                                "function": {"name": tool_name, "arguments": tool_call.function.arguments}}]
-                        })
-                        st.session_state.messages.append({
-                            "role": "tool", "tool_call_id": tool_call.id, "content": result
-                        })
-
-                        final = client.chat.completions.create(
+                    try:
+                        response = client.chat.completions.create(
                             model="llama-3.3-70b-versatile",
                             messages=st.session_state.messages,
-                            tools=tools
+                            tools=tools,
+                            tool_choice="auto"
                         )
-                        reply = final.choices[0].message.content
-                    else:
-                        reply = message.content
+                        message = response.choices[0].message
 
-                    st.write(reply)
-                    st.session_state.chat_history.append({"role": "assistant", "content": reply})
-                    st.rerun()
+                        if message.tool_calls:
+                            tool_call = message.tool_calls[0]
+                            tool_name = tool_call.function.name
+                            arguments = json.loads(tool_call.function.arguments)
+                            result = run_tool(tool_name, arguments)
+
+                            st.session_state.messages.append({
+                                "role": "assistant",
+                                "tool_calls": [{"id": tool_call.id, "type": "function",
+                                    "function": {"name": tool_name, "arguments": tool_call.function.arguments}}]
+                            })
+                            st.session_state.messages.append({
+                                "role": "tool", "tool_call_id": tool_call.id, "content": result
+                            })
+
+                            final = client.chat.completions.create(
+                                model="llama-3.3-70b-versatile",
+                                messages=st.session_state.messages,
+                                tools=tools
+                            )
+                            reply = final.choices[0].message.content
+                        else:
+                            reply = message.content
+
+                        st.write(reply)
+                        st.session_state.chat_history.append({"role": "assistant", "content": reply})
+                        st.rerun()
+
+                    except Exception as e:
+                        st.error(f"Error: {str(e)}")
+                        st.session_state.messages = st.session_state.messages[:-1]
 
     # ── Transactions table ────────────────────────────────
     with col2:
