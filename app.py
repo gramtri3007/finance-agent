@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from groq import Groq
 import os
 from auth import sign_in, sign_up, sign_out
-from database import save_expense_db, get_expenses_db, get_summary_db
+from database import save_expense_db, get_expenses_db, get_summary_db, delete_expense_db, update_expense_db
 
 load_dotenv()
 
@@ -64,7 +64,6 @@ else:
     user_email = st.session_state.user.email
     access_token = st.session_state.session.access_token
 
-    # Tools for this user
     def run_tool(tool_name, arguments):
         if tool_name == "save_expense":
             arguments["amount"] = float(arguments["amount"])
@@ -279,7 +278,6 @@ else:
                     except Exception as e:
                         st.error(f"Error scanning receipt: {str(e)}")
 
-        # Show confirmation outside the button block
         if st.session_state.scanned_expense:
             expense = st.session_state.scanned_expense
             st.success("Receipt scanned successfully!")
@@ -353,7 +351,7 @@ else:
                             st.session_state.messages.append({
                                 "role": "assistant",
                                 "tool_calls": [{"id": tool_call.id, "type": "function",
-                                    "function": {"name": tool_name, "arguments": tool_call.function.arguments}}]
+                                    "function": {"name": tool_name, "arguments": tool_call.function.calls.arguments}}]
                             })
                             st.session_state.messages.append({
                                 "role": "tool", "tool_call_id": tool_call.id, "content": result
@@ -377,14 +375,59 @@ else:
                         st.session_state.messages = st.session_state.messages[:-1]
 
     # ── Transactions table ────────────────────────────────
+    # ── Transactions table ────────────────────────────────
     with col2:
         st.subheader("📋 All Transactions")
         expenses = get_expenses_db(user_id, access_token)
+
+        if "editing_id" not in st.session_state:
+            st.session_state.editing_id = None
+
         if expenses:
-            df = pd.DataFrame(expenses)
-            df["amount"] = df["amount"].abs()
-            df = df[["date", "description", "category", "amount"]]
-            df.columns = ["Date", "Description", "Category", "Amount (€)"]
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            for expense in expenses:
+                c1, c2, c3, c4, c5, c6 = st.columns([2, 3, 2, 1.5, 1, 1])
+                c1.write(expense["date"])
+                c2.write(expense["description"])
+                c3.write(expense["category"])
+                c4.write(f"€{abs(expense['amount']):.2f}")
+
+                with c5:
+                    if st.button("✏️", key=f"edit_{expense['id']}"):
+                        st.session_state.editing_id = expense["id"]
+                        st.session_state.editing_data = expense
+                        st.rerun()
+
+                with c6:
+                    if st.button("🗑️", key=f"del_{expense['id']}"):
+                        delete_expense_db(user_id, expense["id"], access_token)
+                        st.rerun()
+
+            # Edit form
+            if st.session_state.editing_id:
+                e = st.session_state.editing_data
+                st.divider()
+                st.subheader(f"✏️ Editing: {e['description']}")
+
+                with st.form("edit_form"):
+                    new_description = st.text_input("Description", value=e["description"])
+                    new_amount = st.number_input("Amount (€)", value=abs(float(e["amount"])), min_value=0.0, step=0.01)
+                    categories = ["food", "transport", "rent", "health", "entertainment", "shopping", "utilities", "other"]
+                    idx = categories.index(e["category"]) if e["category"] in categories else 0
+                    new_category = st.selectbox("Category", categories, index=idx)
+
+                    col_s, col_c = st.columns(2)
+                    submitted = col_s.form_submit_button("💾 Save", type="primary", use_container_width=True)
+                    cancelled = col_c.form_submit_button("✖ Cancel", use_container_width=True)
+
+                if submitted:
+                    update_expense_db(user_id, e["id"], new_amount, new_category, new_description, access_token)
+                    st.session_state.editing_id = None
+                    st.session_state.editing_data = None
+                    st.rerun()
+
+                if cancelled:
+                    st.session_state.editing_id = None
+                    st.session_state.editing_data = None
+                    st.rerun()
         else:
             st.info("No transactions yet! Upload a statement or add expenses via chat.")

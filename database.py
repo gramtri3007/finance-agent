@@ -62,3 +62,16 @@ def delete_expense_db(user_id, expense_id, access_token=None):
         .eq("user_id", user_id)\
         .execute()
     return "Expense deleted."
+
+def update_expense_db(user_id, expense_id, amount, category, description, access_token=None):
+    supabase = get_client(access_token)
+    supabase.table("expenses")\
+        .update({
+            "amount": float(amount),
+            "category": category,
+            "description": description
+        })\
+        .eq("id", expense_id)\
+        .eq("user_id", user_id)\
+        .execute()
+    return "Expense updated."
